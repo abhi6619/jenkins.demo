@@ -27,32 +27,24 @@ pipeline {
         }
 
         stage('Docker Login') {
-            steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-credentials',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASSWORD'
-                    )
-                ]) {
-                    sh '''
-                        echo "$DOCKER_PASSWORD" | docker login \
-                            -u "$DOCKER_USER" \
-                            --password-stdin
-                    '''
-                }
-            }
-        }
+    steps {
+        withCredentials([
+            usernamePassword(
+                credentialsId: 'dockerhub-credentials',
+                usernameVariable: 'DOCKER_USER',
+                passwordVariable: 'DOCKER_PASSWORD'
+            )
+        ]) {
+            sh '''
+                set -e
 
-        stage('Push Image') {
-            steps {
-                sh '''
-                    docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-                    docker push ${DOCKER_IMAGE}:latest
-                '''
-            }
+                printf '%s' "$DOCKER_PASSWORD" | docker login docker.io \
+                    --username "$DOCKER_USER" \
+                    --password-stdin
+            '''
         }
-
+    }
+}
         stage('Deploy to Minikube') {
             steps {
                 withKubeConfig([
