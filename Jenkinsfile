@@ -4,7 +4,11 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = 'abhi7677/calculater'
-        DOCKER_TAG = "${BUILD_NUMBER}"
+        DOCKER_TAG   = "${BUILD_NUMBER}"
+
+        MINIKUBE_VM  = '192.168.14.62'
+        LOCAL_API    = '127.0.0.1:8443'
+        REMOTE_API   = '127.0.0.1:32771'
     }
 
     stages {
@@ -23,7 +27,9 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "Building Docker image..."
+                    echo "========================================"
+                    echo "BUILDING DOCKER IMAGE"
+                    echo "========================================"
 
                     docker build \
                         -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
@@ -32,13 +38,14 @@ pipeline {
                         ${DOCKER_IMAGE}:${DOCKER_TAG} \
                         ${DOCKER_IMAGE}:latest
 
-                    echo "Docker build completed."
+                    docker images | grep calculater
                 '''
             }
         }
 
         stage('Docker Login') {
             steps {
+
                 withCredentials([
                     usernamePassword(
                         credentialsId: 'dockerhub-credentials',
@@ -46,17 +53,20 @@ pipeline {
                         passwordVariable: 'DOCKER_PASSWORD'
                     )
                 ]) {
+
                     sh '''
                         set -e
 
-                        echo "Logging in to Docker Hub..."
+                        echo "========================================"
+                        echo "DOCKER HUB LOGIN"
+                        echo "========================================"
 
                         printf '%s' "$DOCKER_PASSWORD" | \
                         docker login docker.io \
                             --username "$DOCKER_USER" \
                             --password-stdin
 
-                        echo "Docker login successful."
+                        echo "Docker Hub login successful."
                     '''
                 }
             }
@@ -67,11 +77,11 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "Pushing ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                    echo "========================================"
+                    echo "PUSHING IMAGE"
+                    echo "========================================"
 
                     docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-
-                    echo "Pushing latest tag"
 
                     docker push ${DOCKER_IMAGE}:latest
 
@@ -80,36 +90,95 @@ pipeline {
             }
         }
 
+        stage('Create SSH Tunnel') {
+            steps {
+
+                withCredentials([
+                    sshUserPrivateKey(
+                        credentialsId: 'minikube-ssh',
+                        keyFileVariable: 'SSH_KEY',
+                        usernameVariable: 'SSH_USER'
+                    )
+                ]) {
+
+                    sh '''
+                        set -e
+
+                        echo "========================================"
+                        echo "CREATING SSH TUNNEL"
+                        echo "========================================"
+
+                        chmod 600 "$SSH_KEY"
+
+                        # Remove an old tunnel if present
+                        pkill -f "127.0.0.1:8443:127.0.0.1:32771" || true
+
+                        ssh -f -N \
+                            -i "$SSH_KEY" \
+                            -o StrictHostKeyChecking=no \
+                            -o UserKnownHostsFile=/dev/null \
+                            -o ExitOnForwardFailure=yes \
+                            -L 8443:127.0.0.1:32771 \
+                            ${SSH_USER}@${MINIKUBE_VM}
+
+                        echo "SSH tunnel created."
+
+                        sleep 2
+
+                        echo "Testing Kubernetes API..."
+
+                        curl -k -m 10 \
+                            https://127.0.0.1:8443/version
+
+                        echo ""
+                        echo "Kubernetes API is reachable."
+                    '''
+                }
+            }
+        }
+
         stage('Kubernetes Connection Test') {
             steps {
+
                 withCredentials([
                     file(
                         credentialsId: 'jenkins-deployer',
                         variable: 'KUBECONFIG_FILE'
                     )
                 ]) {
+
                     sh '''
                         set -e
 
-                        export KUBECONFIG="$KUBECONFIG_FILE"
+                        echo "========================================"
+                        echo "KUBERNETES CONNECTION TEST"
+                        echo "========================================"
 
-                        echo "Testing Kubernetes connection..."
+                        export KUBECONFIG="$KUBECONFIG_FILE"
 
                         kubectl cluster-info
 
-                        echo "Kubernetes identity:"
+                        echo "========================================"
+                        echo "KUBERNETES IDENTITY"
+                        echo "========================================"
 
                         kubectl auth whoami
 
-                        echo "Testing Deployment permission:"
+                        echo "========================================"
+                        echo "RBAC TEST"
+                        echo "========================================"
 
+                        echo "Create Deployment:"
                         kubectl auth can-i create deployments
 
-                        echo "Testing Service permission:"
+                        echo "Update Deployment:"
+                        kubectl auth can-i update deployments
 
+                        echo "Create Service:"
                         kubectl auth can-i create services
 
-                        echo "Kubernetes connection successful."
+                        echo "Get Pods:"
+                        kubectl auth can-i get pods
                     '''
                 }
             }
@@ -117,49 +186,62 @@ pipeline {
 
         stage('Deploy to Minikube') {
             steps {
+
                 withCredentials([
                     file(
                         credentialsId: 'jenkins-deployer',
                         variable: 'KUBECONFIG_FILE'
                     )
                 ]) {
+
                     sh '''
                         set -e
 
                         export KUBECONFIG="$KUBECONFIG_FILE"
 
-                        echo "Applying Deployment..."
+                        echo "========================================"
+                        echo "DEPLOYING APPLICATION"
+                        echo "========================================"
 
                         kubectl apply \
                             -f k8s/deployment.yaml
 
-                        echo "Applying Service..."
-
                         kubectl apply \
                             -f k8s/service.yaml
 
-                        echo "Updating image..."
+                        echo "========================================"
+                        echo "UPDATING IMAGE"
+                        echo "========================================"
 
                         kubectl set image \
                             deployment/calculator \
                             calculator=${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                        echo "Waiting for rollout..."
+                        echo "========================================"
+                        echo "WAITING FOR ROLLOUT"
+                        echo "========================================"
 
                         kubectl rollout status \
                             deployment/calculator \
                             --timeout=180s
 
-                        echo "Deployment status:"
+                        echo "========================================"
+                        echo "DEPLOYMENT"
+                        echo "========================================"
 
                         kubectl get deployment calculator
 
-                        echo "Pod status:"
+                        echo "========================================"
+                        echo "PODS"
+                        echo "========================================"
 
                         kubectl get pods \
-                            -l app=calculator
+                            -l app=calculator \
+                            -o wide
 
-                        echo "Service status:"
+                        echo "========================================"
+                        echo "SERVICE"
+                        echo "========================================"
 
                         kubectl get service calculator
                     '''
@@ -170,26 +252,42 @@ pipeline {
 
     post {
 
+        always {
+            sh '''
+                echo "Cleaning SSH tunnel..."
+
+                pkill -f "127.0.0.1:8443:127.0.0.1:32771" || true
+            '''
+
+            echo "Build Number: ${BUILD_NUMBER}"
+        }
+
         success {
-            echo "========================================"
-            echo "PIPELINE SUCCESSFUL"
-            echo "========================================"
-            echo "Application: Calculator"
-            echo "Docker Image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
-            echo "Kubernetes: Minikube"
-            echo "ServiceAccount: jenkins-deployer"
-            echo "========================================"
+            echo """
+            ========================================
+                 PIPELINE SUCCESSFUL
+            ========================================
+
+            Application : Calculator
+            Image       : ${DOCKER_IMAGE}:${DOCKER_TAG}
+            Kubernetes  : Minikube
+            Minikube VM : ${MINIKUBE_VM}
+            ServiceAccount: jenkins-deployer
+
+            ========================================
+            """
         }
 
         failure {
-            echo "========================================"
-            echo "PIPELINE FAILED"
-            echo "Check the failed stage in Console Output."
-            echo "========================================"
-        }
+            echo """
+            ========================================
+                 PIPELINE FAILED
+            ========================================
 
-        always {
-            echo "Build Number: ${BUILD_NUMBER}"
+            Check the failed stage above.
+
+            ========================================
+            """
         }
     }
 }
