@@ -7,14 +7,13 @@ pipeline {
         DOCKER_TAG   = "${BUILD_NUMBER}"
 
         MINIKUBE_HOST = '192.168.14.62'
-        LOCAL_API_PORT = '8443'
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                echo 'Checking out source code...'
+                echo 'Checking out application source...'
 
                 git(
                     branch: 'main',
@@ -28,7 +27,9 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "Building Docker image..."
+                    echo "========================================"
+                    echo "BUILD DOCKER IMAGE"
+                    echo "========================================"
 
                     docker build \
                         -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
@@ -36,8 +37,6 @@ pipeline {
                     docker tag \
                         ${DOCKER_IMAGE}:${DOCKER_TAG} \
                         ${DOCKER_IMAGE}:latest
-
-                    echo "Docker build successful."
 
                     docker images | grep calculater
                 '''
@@ -58,7 +57,9 @@ pipeline {
                     sh '''
                         set -e
 
-                        echo "Logging in to Docker Hub..."
+                        echo "========================================"
+                        echo "DOCKER HUB LOGIN"
+                        echo "========================================"
 
                         printf '%s' "$DOCKER_PASSWORD" | \
                         docker login docker.io \
@@ -76,11 +77,11 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "Pushing image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                    echo "========================================"
+                    echo "PUSH DOCKER IMAGE"
+                    echo "========================================"
 
                     docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-
-                    echo "Pushing latest image..."
 
                     docker push ${DOCKER_IMAGE}:latest
 
@@ -103,14 +104,15 @@ pipeline {
                     sh '''
                         set -e
 
-                        echo "Creating SSH tunnel..."
+                        echo "========================================"
+                        echo "CREATE SSH TUNNEL"
+                        echo "========================================"
 
                         chmod 600 "$SSH_KEY"
 
-                        # Remove an existing tunnel
-                        pkill -f "ssh.*8443:127.0.0.1:32771" || true
+                        # Clean any old tunnel created by this job
+                        pkill -f "ssh.*-L 8443:127.0.0.1:32771" || true
 
-                        # Create SSH tunnel
                         ssh -f -N \
                             -i "$SSH_KEY" \
                             -o StrictHostKeyChecking=no \
@@ -119,9 +121,9 @@ pipeline {
                             -L 8443:127.0.0.1:32771 \
                             ${SSH_USER}@${MINIKUBE_HOST}
 
-                        echo "SSH tunnel created successfully."
-
                         sleep 2
+
+                        echo "SSH tunnel created."
 
                         echo "Testing Kubernetes API..."
 
@@ -150,19 +152,21 @@ pipeline {
 
                         export KUBECONFIG="$KUBECONFIG_FILE"
 
-                        echo "Testing Kubernetes connection..."
+                        echo "========================================"
+                        echo "KUBERNETES CONNECTION"
+                        echo "========================================"
 
                         kubectl cluster-info
 
-                        echo "----------------------------------------"
-                        echo "Kubernetes Identity"
-                        echo "----------------------------------------"
+                        echo "========================================"
+                        echo "KUBERNETES IDENTITY"
+                        echo "========================================"
 
                         kubectl auth whoami
 
-                        echo "----------------------------------------"
-                        echo "RBAC Validation"
-                        echo "----------------------------------------"
+                        echo "========================================"
+                        echo "RBAC CHECK"
+                        echo "========================================"
 
                         echo "Create Deployment:"
                         kubectl auth can-i create deployments
@@ -175,8 +179,6 @@ pipeline {
 
                         echo "Get Pods:"
                         kubectl auth can-i get pods
-
-                        echo "Kubernetes authentication successful."
                     '''
                 }
             }
@@ -197,7 +199,9 @@ pipeline {
 
                         export KUBECONFIG="$KUBECONFIG_FILE"
 
-                        echo "Deploying Kubernetes resources..."
+                        echo "========================================"
+                        echo "DEPLOY APPLICATION"
+                        echo "========================================"
 
                         kubectl apply \
                             -f k8s/deployment.yaml
@@ -205,35 +209,39 @@ pipeline {
                         kubectl apply \
                             -f k8s/service.yaml
 
-                        echo "Updating deployment image..."
+                        echo "========================================"
+                        echo "UPDATE IMAGE"
+                        echo "========================================"
 
                         kubectl set image \
                             deployment/calculator \
                             calculator=${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                        echo "Waiting for rollout..."
+                        echo "========================================"
+                        echo "ROLLOUT"
+                        echo "========================================"
 
                         kubectl rollout status \
                             deployment/calculator \
                             --timeout=180s
 
-                        echo "----------------------------------------"
-                        echo "Deployment"
-                        echo "----------------------------------------"
+                        echo "========================================"
+                        echo "DEPLOYMENT STATUS"
+                        echo "========================================"
 
                         kubectl get deployment calculator
 
-                        echo "----------------------------------------"
-                        echo "Pods"
-                        echo "----------------------------------------"
+                        echo "========================================"
+                        echo "POD STATUS"
+                        echo "========================================"
 
                         kubectl get pods \
                             -l app=calculator \
                             -o wide
 
-                        echo "----------------------------------------"
-                        echo "Service"
-                        echo "----------------------------------------"
+                        echo "========================================"
+                        echo "SERVICE STATUS"
+                        echo "========================================"
 
                         kubectl get service calculator
                     '''
@@ -244,23 +252,26 @@ pipeline {
 
     post {
 
+        always {
+            echo "Cleaning SSH tunnel..."
+
+            sh '''
+                pkill -f "ssh.*-L 8443:127.0.0.1:32771" || true
+            '''
+
+            echo "Build Number: ${BUILD_NUMBER}"
+        }
+
         success {
             echo """
 ============================================
        PIPELINE SUCCESSFUL
 ============================================
 
-Application:
-Calculator
-
-Docker Image:
-${DOCKER_IMAGE}:${DOCKER_TAG}
-
-Minikube VM:
-${MINIKUBE_HOST}
-
-Kubernetes ServiceAccount:
-jenkins-deployer
+Application       : Calculator
+Docker Image      : ${DOCKER_IMAGE}:${DOCKER_TAG}
+Minikube VM       : ${MINIKUBE_HOST}
+Kubernetes SA     : jenkins-deployer
 
 ============================================
 """
@@ -277,16 +288,6 @@ console output.
 
 ============================================
 """
-        }
-
-        always {
-            sh '''
-                echo "Cleaning SSH tunnel..."
-
-                pkill -f "ssh.*8443:127.0.0.1:32771" || true
-            '''
-
-            echo "Build Number: ${BUILD_NUMBER}"
         }
     }
 }
