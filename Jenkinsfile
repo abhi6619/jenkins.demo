@@ -1,4 +1,7 @@
-```groovy
+
+The actual file should start directly like this:
+
+:::writing{variant="document" id="74126"}
 pipeline {
     agent any
 
@@ -36,7 +39,6 @@ pipeline {
                 ]) {
                     sh '''
                         set -e
-
                         echo "$DOCKER_PASSWORD" | docker login \
                             --username "$DOCKER_USERNAME" \
                             --password-stdin
@@ -50,15 +52,12 @@ pipeline {
                 sh '''
                     set -e
 
-                    # Push build-specific image
                     docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                    # Tag the same image as latest
                     docker tag \
                         ${DOCKER_IMAGE}:${DOCKER_TAG} \
                         ${DOCKER_IMAGE}:latest
 
-                    # Push latest
                     docker push ${DOCKER_IMAGE}:latest
                 '''
             }
@@ -97,4 +96,8 @@ pipeline {
         }
     }
 }
-```
+:::
+
+**Important:** When copying the above into GitHub, copy only the content starting with `pipeline {` and ending with `}`. Do not add Markdown ``` characters.
+
+After committing the corrected Jenkinsfile, run **Build Now** again. Your pipeline should get past the Groovy compilation stage and proceed to Docker build/login.
