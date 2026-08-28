@@ -3,17 +3,18 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE = "abhi7677/calculater"
-        DOCKER_TAG   = "${BUILD_NUMBER}"
-        KUBE_SERVER  = "https://kubernetes.default.svc"
+        DOCKER_IMAGE = 'abhi7677/calculater'
+        DOCKER_TAG = "${BUILD_NUMBER}"
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                git branch: 'main',
-                    url: 'http://github.com/abhi6619/jenkins.demo'
+                git(
+                    branch: 'main',
+                    url: 'https://github.com/abhi6619/jenkins.demo'
+                )
             }
         }
 
@@ -23,13 +24,15 @@ pipeline {
                     set -e
 
                     echo "Building Docker image..."
-                    docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
 
-                    echo "Creating latest tag..."
-                    docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
+                    docker build \
+                        -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
 
-                    echo "Images created:"
-                    docker images | grep calculater
+                    docker tag \
+                        ${DOCKER_IMAGE}:${DOCKER_TAG} \
+                        ${DOCKER_IMAGE}:latest
+
+                    echo "Docker build completed."
                 '''
             }
         }
@@ -50,10 +53,10 @@ pipeline {
 
                         printf '%s' "$DOCKER_PASSWORD" | \
                         docker login docker.io \
-                        --username "$DOCKER_USER" \
-                        --password-stdin
+                            --username "$DOCKER_USER" \
+                            --password-stdin
 
-                        echo "Docker Hub login successful."
+                        echo "Docker login successful."
                     '''
                 }
             }
@@ -64,10 +67,12 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "Pushing versioned image..."
+                    echo "Pushing ${DOCKER_IMAGE}:${DOCKER_TAG}"
+
                     docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                    echo "Pushing latest image..."
+                    echo "Pushing latest tag"
+
                     docker push ${DOCKER_IMAGE}:latest
 
                     echo "Docker images pushed successfully."
@@ -75,60 +80,116 @@ pipeline {
             }
         }
 
+        stage('Kubernetes Connection Test') {
+            steps {
+                withCredentials([
+                    file(
+                        credentialsId: 'jenkins-deployer',
+                        variable: 'KUBECONFIG_FILE'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+
+                        export KUBECONFIG="$KUBECONFIG_FILE"
+
+                        echo "Testing Kubernetes connection..."
+
+                        kubectl cluster-info
+
+                        echo "Kubernetes identity:"
+
+                        kubectl auth whoami
+
+                        echo "Testing Deployment permission:"
+
+                        kubectl auth can-i create deployments
+
+                        echo "Testing Service permission:"
+
+                        kubectl auth can-i create services
+
+                        echo "Kubernetes connection successful."
+                    '''
+                }
+            }
+        }
+
         stage('Deploy to Minikube') {
-    steps {
-        withCredentials([
-            file(
-                credentialsId: 'jenkins-deployer',
-                variable: 'KUBECONFIG_FILE'
-            )
-        ]) {
-            sh '''
-                set -e
+            steps {
+                withCredentials([
+                    file(
+                        credentialsId: 'jenkins-deployer',
+                        variable: 'KUBECONFIG_FILE'
+                    )
+                ]) {
+                    sh '''
+                        set -e
 
-                echo "======================================"
-                echo "Kubernetes Connection"
-                echo "======================================"
+                        export KUBECONFIG="$KUBECONFIG_FILE"
 
-                export KUBECONFIG="$KUBECONFIG_FILE"
+                        echo "Applying Deployment..."
 
-                kubectl cluster-info
+                        kubectl apply \
+                            -f k8s/deployment.yaml
 
-                echo "======================================"
-                echo "Current Kubernetes Identity"
-                echo "======================================"
+                        echo "Applying Service..."
 
-                kubectl auth whoami
+                        kubectl apply \
+                            -f k8s/service.yaml
 
-                echo "======================================"
-                echo "Deploying Application"
-                echo "======================================"
+                        echo "Updating image..."
 
-                kubectl apply -f k8s/deployment.yaml
-                kubectl apply -f k8s/service.yaml
+                        kubectl set image \
+                            deployment/calculator \
+                            calculator=${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                echo "======================================"
-                echo "Updating Image"
-                echo "======================================"
+                        echo "Waiting for rollout..."
 
-                kubectl set image deployment/calculator \
-                    calculator=${DOCKER_IMAGE}:${DOCKER_TAG}
+                        kubectl rollout status \
+                            deployment/calculator \
+                            --timeout=180s
 
-                echo "======================================"
-                echo "Waiting for Rollout"
-                echo "======================================"
+                        echo "Deployment status:"
 
-                kubectl rollout status deployment/calculator \
-                    --timeout=180s
+                        kubectl get deployment calculator
 
-                echo "======================================"
-                echo "Final Status"
-                echo "======================================"
+                        echo "Pod status:"
 
-                kubectl get deployment calculator
-                kubectl get pods -l app=calculator
-                kubectl get service calculator
-            '''
+                        kubectl get pods \
+                            -l app=calculator
+
+                        echo "Service status:"
+
+                        kubectl get service calculator
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+
+        success {
+            echo "========================================"
+            echo "PIPELINE SUCCESSFUL"
+            echo "========================================"
+            echo "Application: Calculator"
+            echo "Docker Image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+            echo "Kubernetes: Minikube"
+            echo "ServiceAccount: jenkins-deployer"
+            echo "========================================"
+        }
+
+        failure {
+            echo "========================================"
+            echo "PIPELINE FAILED"
+            echo "Check the failed stage in Console Output."
+            echo "========================================"
+        }
+
+        always {
+            echo "Build Number: ${BUILD_NUMBER}"
         }
     }
 }
