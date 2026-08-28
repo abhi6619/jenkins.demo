@@ -76,44 +76,52 @@ pipeline {
         }
 
         stage('Deploy to Minikube') {
-            steps {
-                withKubeConfig([
-                    credentialsId: 'jenkins-deployer',
-                    serverUrl: "${KUBE_SERVER}",
-                    namespace: 'default'
-                ]) {
-                    sh '''
-                        set -e
+    steps {
+        withCredentials([
+            file(
+                credentialsId: 'jenkins-deployer',
+                variable: 'KUBECONFIG'
+            )
+        ]) {
+            sh '''
+                set -e
 
-                        echo "Checking Kubernetes connection..."
-                        kubectl cluster-info
+                echo "Checking Kubernetes connection..."
 
-                        echo "Deploying Kubernetes manifests..."
-                        kubectl apply -f k8s/deployment.yaml
-                        kubectl apply -f k8s/service.yaml
+                export KUBECONFIG="$KUBECONFIG"
 
-                        echo "Updating deployment image..."
-                        kubectl set image deployment/calculator \
-                            calculator=${DOCKER_IMAGE}:${DOCKER_TAG}
+                kubectl cluster-info
 
-                        echo "Waiting for rollout..."
-                        kubectl rollout status deployment/calculator \
-                            --timeout=180s
+                echo "Checking nodes..."
+                kubectl get nodes
 
-                        echo "Deployment status:"
-                        kubectl get deployment calculator
+                echo "Deploying application..."
 
-                        echo "Pods:"
-                        kubectl get pods -l app=calculator
+                kubectl apply -f k8s/deployment.yaml
+                kubectl apply -f k8s/service.yaml
 
-                        echo "Service:"
-                        kubectl get service calculator
-                    '''
-                }
-            }
+                echo "Updating application image..."
+
+                kubectl set image deployment/calculator \
+                    calculator=${DOCKER_IMAGE}:${DOCKER_TAG}
+
+                echo "Waiting for deployment rollout..."
+
+                kubectl rollout status deployment/calculator \
+                    --timeout=180s
+
+                echo "Deployment:"
+                kubectl get deployment calculator
+
+                echo "Pods:"
+                kubectl get pods -l app=calculator
+
+                echo "Service:"
+                kubectl get service calculator
+            '''
         }
     }
-
+}
     post {
 
         success {
