@@ -80,74 +80,55 @@ pipeline {
         withCredentials([
             file(
                 credentialsId: 'jenkins-deployer',
-                variable: 'KUBECONFIG'
+                variable: 'KUBECONFIG_FILE'
             )
         ]) {
             sh '''
                 set -e
 
-                echo "Checking Kubernetes connection..."
+                echo "======================================"
+                echo "Kubernetes Connection"
+                echo "======================================"
 
-                export KUBECONFIG="$KUBECONFIG"
+                export KUBECONFIG="$KUBECONFIG_FILE"
 
                 kubectl cluster-info
 
-                echo "Checking nodes..."
-                kubectl get nodes
+                echo "======================================"
+                echo "Current Kubernetes Identity"
+                echo "======================================"
 
-                echo "Deploying application..."
+                kubectl auth whoami
+
+                echo "======================================"
+                echo "Deploying Application"
+                echo "======================================"
 
                 kubectl apply -f k8s/deployment.yaml
                 kubectl apply -f k8s/service.yaml
 
-                echo "Updating application image..."
+                echo "======================================"
+                echo "Updating Image"
+                echo "======================================"
 
                 kubectl set image deployment/calculator \
                     calculator=${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                echo "Waiting for deployment rollout..."
+                echo "======================================"
+                echo "Waiting for Rollout"
+                echo "======================================"
 
                 kubectl rollout status deployment/calculator \
                     --timeout=180s
 
-                echo "Deployment:"
+                echo "======================================"
+                echo "Final Status"
+                echo "======================================"
+
                 kubectl get deployment calculator
-
-                echo "Pods:"
                 kubectl get pods -l app=calculator
-
-                echo "Service:"
                 kubectl get service calculator
             '''
-        }
-    }
-}
-    post {
-
-        success {
-            echo """
-            ========================================
-            PIPELINE SUCCESSFUL
-            ========================================
-            Docker Image : ${DOCKER_IMAGE}:${DOCKER_TAG}
-            Kubernetes   : Minikube
-            Deployment   : calculator
-            ========================================
-            """
-        }
-
-        failure {
-            echo """
-            ========================================
-            PIPELINE FAILED
-            ========================================
-            Check the failed stage in the console.
-            ========================================
-            """
-        }
-
-        always {
-            echo "Build Number: ${BUILD_NUMBER}"
         }
     }
 }
