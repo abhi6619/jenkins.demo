@@ -1,20 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: calculator
+  name: jenkins
+  namespace: jenkins
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
-      app: calculator
+      app: jenkins
   template:
     metadata:
       labels:
-        app: calculator
+        app: jenkins
     spec:
+      serviceAccountName: jenkins-deployer
       containers:
-        - name: calculator
-          image: abhi7677/calculater:latest
-          imagePullPolicy: Always
+        - name: jenkins
+          image: jenkins/jenkins:lts
           ports:
-            - containerPort: 5000
+            - containerPort: 8080
