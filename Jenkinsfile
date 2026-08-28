@@ -3,18 +3,17 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE = 'abhi7677/calculater'
-        DOCKER_TAG   = "${BUILD_NUMBER}"
+        DOCKER_IMAGE  = 'abhi7677/calculater'
+        DOCKER_TAG    = "${BUILD_NUMBER}"
 
         MINIKUBE_HOST = '192.168.14.62'
+        LOCAL_API_PORT = '18443'
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                echo 'Checking out application source...'
-
                 git(
                     branch: 'main',
                     url: 'https://github.com/abhi6619/jenkins.demo'
@@ -27,10 +26,6 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "========================================"
-                    echo "BUILD DOCKER IMAGE"
-                    echo "========================================"
-
                     docker build \
                         -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
 
@@ -38,14 +33,13 @@ pipeline {
                         ${DOCKER_IMAGE}:${DOCKER_TAG} \
                         ${DOCKER_IMAGE}:latest
 
-                    docker images | grep calculater
+                    echo "Docker build successful."
                 '''
             }
         }
 
         stage('Docker Login') {
             steps {
-
                 withCredentials([
                     usernamePassword(
                         credentialsId: 'dockerhub-credentials',
@@ -53,13 +47,8 @@ pipeline {
                         passwordVariable: 'DOCKER_PASSWORD'
                     )
                 ]) {
-
                     sh '''
                         set -e
-
-                        echo "========================================"
-                        echo "DOCKER HUB LOGIN"
-                        echo "========================================"
 
                         printf '%s' "$DOCKER_PASSWORD" | \
                         docker login docker.io \
@@ -77,12 +66,7 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "========================================"
-                    echo "PUSH DOCKER IMAGE"
-                    echo "========================================"
-
                     docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-
                     docker push ${DOCKER_IMAGE}:latest
 
                     echo "Docker images pushed successfully."
@@ -110,25 +94,29 @@ pipeline {
 
                         chmod 600 "$SSH_KEY"
 
-                        # Clean any old tunnel created by this job
-                        pkill -f "ssh.*-L 8443:127.0.0.1:32771" || true
+                        echo "Checking local port ${LOCAL_API_PORT}..."
+
+                        if ss -lnt | grep -q ":${LOCAL_API_PORT} "; then
+                            echo "Port ${LOCAL_API_PORT} is already in use."
+                            exit 1
+                        fi
 
                         ssh -f -N \
                             -i "$SSH_KEY" \
                             -o StrictHostKeyChecking=no \
                             -o UserKnownHostsFile=/dev/null \
                             -o ExitOnForwardFailure=yes \
-                            -L 8443:127.0.0.1:32771 \
+                            -L ${LOCAL_API_PORT}:127.0.0.1:32771 \
                             ${SSH_USER}@${MINIKUBE_HOST}
 
-                        sleep 2
+                        echo "SSH tunnel created successfully."
 
-                        echo "SSH tunnel created."
+                        sleep 2
 
                         echo "Testing Kubernetes API..."
 
                         curl -k -m 10 \
-                            https://127.0.0.1:8443/version
+                            https://127.0.0.1:${LOCAL_API_PORT}/version
 
                         echo ""
                         echo "Kubernetes API is reachable."
@@ -209,30 +197,26 @@ pipeline {
                         kubectl apply \
                             -f k8s/service.yaml
 
-                        echo "========================================"
-                        echo "UPDATE IMAGE"
-                        echo "========================================"
+                        echo "Updating image..."
 
                         kubectl set image \
                             deployment/calculator \
                             calculator=${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                        echo "========================================"
-                        echo "ROLLOUT"
-                        echo "========================================"
+                        echo "Waiting for rollout..."
 
                         kubectl rollout status \
                             deployment/calculator \
                             --timeout=180s
 
                         echo "========================================"
-                        echo "DEPLOYMENT STATUS"
+                        echo "DEPLOYMENT"
                         echo "========================================"
 
                         kubectl get deployment calculator
 
                         echo "========================================"
-                        echo "POD STATUS"
+                        echo "PODS"
                         echo "========================================"
 
                         kubectl get pods \
@@ -240,7 +224,7 @@ pipeline {
                             -o wide
 
                         echo "========================================"
-                        echo "SERVICE STATUS"
+                        echo "SERVICE"
                         echo "========================================"
 
                         kubectl get service calculator
@@ -256,7 +240,14 @@ pipeline {
             echo "Cleaning SSH tunnel..."
 
             sh '''
-                pkill -f "ssh.*-L 8443:127.0.0.1:32771" || true
+                TUNNEL_PID=$(pgrep -f \
+                    "ssh.*-L ${LOCAL_API_PORT}:127.0.0.1:32771" \
+                    || true)
+
+                if [ -n "$TUNNEL_PID" ]; then
+                    echo "Stopping SSH tunnel: $TUNNEL_PID"
+                    kill $TUNNEL_PID || true
+                fi
             '''
 
             echo "Build Number: ${BUILD_NUMBER}"
@@ -268,10 +259,10 @@ pipeline {
        PIPELINE SUCCESSFUL
 ============================================
 
-Application       : Calculator
-Docker Image      : ${DOCKER_IMAGE}:${DOCKER_TAG}
-Minikube VM       : ${MINIKUBE_HOST}
-Kubernetes SA     : jenkins-deployer
+Application    : Calculator
+Docker Image   : ${DOCKER_IMAGE}:${DOCKER_TAG}
+Minikube VM    : ${MINIKUBE_HOST}
+Kubernetes SA  : jenkins-deployer
 
 ============================================
 """
