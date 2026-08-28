@@ -102,7 +102,7 @@ pipeline {
             steps {
                 withCredentials([
                     string(
-                        credentialsId: 'jenkins-deployer-token',
+                        credentialsId: 'jenkins-deployer',
                         variable: 'KUBE_TOKEN'
                     )
                 ]) {
