@@ -19,6 +19,6 @@ spec:
     spec:
       containers:
         - name: calculater
-          image: abhi7677/calculater:19
+          image: abhi7677/calculater:1
           ports:
             - containerPort: 8084
