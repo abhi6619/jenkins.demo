@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: calculater-ingress
+  namespace: jenkin
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: calculater.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: calculater-service
+                port:
+                  number: 8084
